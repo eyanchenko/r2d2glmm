@@ -1,0 +1,186 @@
+---
+title: "R2D2 Prior for Mixed Effects Poisson Regression"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{example}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+In this example, we will demonstrate the use of the R2D2 prior for a mixed effects poisson regression. Let $Y_i$ be the response, $X_i$ be the ($p=5$) fixed effect covariates and $Z_i$ be the $q=1$-way random effect covariate with $L=20$ levels for $i=1,\dots,100$. Then
+$$
+  Y_{ij} \sim \mathsf{Poisson}(e^{\eta_{ij}})
+$$
+where
+$$
+  \eta_{ij} = \beta_0 + X_i\beta + \alpha_j.
+$$
+
+#### Generate Data
+
+```{r}
+set.seed(27605)
+
+n=100
+p=5
+L=20
+sigma2_alpha <- 0.50
+
+beta <- rnorm(p, 0, sqrt(0.10))
+alpha <- rnorm(L, 0, sqrt(sigma2_alpha))
+b0 <- 0.25
+
+X <- matrix(rnorm(n*p), nrow=n, ncol=p)
+ind <- rep(1:L, n/L)
+
+eta <- b0 + X%*%beta + alpha[ind]
+
+Y <- rpois(n, exp(eta))
+
+```
+
+#### Priors
+
+$$
+  \beta_0\sim\mathsf{Normal}(\mu_0,\tau_0^2),\ \beta_j\sim\mathsf{Normal}(0,\phi_1 W/p),\ \boldsymbol{\alpha}\sim\mathsf{Normal}(0, \phi_2 W{\bf I}_L),\\ (\phi_1,\phi_2)\sim\mathsf{Dirichlet}(\xi_1,\xi_2),\
+  W\sim\mbox{GBP}(a^*,b^*,c^*,d^*)
+$$
+where $\mu_0=0,\tau_0^2=3$ and $\xi_1=\xi_2=1$.
+
+### Compute $(a^*,b^*,c^*,d^*)$
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(r2d2glmm)
+```
+
+```{r}
+a=1
+b=1
+params <- WGBP(a, b, b0=log(mean(Y)), link="Poisson")
+params
+```
+
+
+### Fit Model in JAGS
+
+```{r}
+library(rjags)
+
+  data = list(Y=Y, X = X, n=n, p=p, ind=ind, L=L, params=params)
+  
+  model_string <- textConnection("model{
+                               
+  ##Likelihood
+
+ for(i in 1:n){
+ Y[i] ~ dpois(lambda[i])
+ log(lambda[i]) <- beta0 + inprod(X[i,], beta[]) + alpha[ind[i]]
+ }
+
+
+                              
+##Priors
+
+
+  V ~ dbeta(params[1], params[2])
+  W <- params[4]*(V/(1-V))^(1/params[3])
+  
+  for(i in 1:2){delta[i] <- 1}
+  dd ~ ddirch(delta)
+  
+  beta0 ~ dnorm(0, 1/3)
+  
+  for(j in 1:p){
+  beta[j] ~ dnorm(0, 1/(W*dd[1]/p))
+  }
+  
+  for(j in 1:L){
+  alpha[j] ~ dnorm(0, 1/(W*dd[2]))
+  }
+        
+                                 }")
+  
+  inits <- list(beta=rnorm(p,0,1))
+  model <- jags.model(model_string,data = data, inits=inits, n.chains=1)
+  
+  update(model, 5000)
+  
+  params <- c("beta", "alpha", "beta0", "W", "dd")
+  samples <- coda.samples(model,
+                          variable.names=params,
+                          n.iter=10000)
+
+```
+
+
+## Check convergence
+
+```{r, fig.width=7}
+plot(samples[[1]][,1]) # W
+plot(samples[[1]][,5]) # alpha_5
+plot(samples[[1]][,1+L+2]) # beta_2
+plot(samples[[1]][,1+L+p+2]) # phi_1
+
+```
+
+## Plot results
+
+```{r, fig.width=7}
+library(dplyr)
+library(ggplot2)
+
+bayes_R2 <- function(X, p, L, ind, samples){
+  
+  b0s <- as.matrix(samples[[1]][,1+L+p+1])
+  betas <- as.matrix(samples[[1]][,(1+L+1):(1+L+p)])
+  alphas <- as.matrix(samples[[1]][,2:(L+1)])
+
+  Z <- matrix(0, nrow=p*L, ncol=L)
+  
+  for(i in 1:(p*L)){Z[i, ind[i]] <- 1}
+
+  etas <- betas%*%base::t(X) + alphas %*% t(Z)
+  
+  etas <- sweep(etas, 1, b0s, "+")
+  
+  y_pred <- exp(etas)  
+  M <- apply(y_pred,1,var)
+  V <- apply(y_pred,1,mean)
+  return(M/(M+V))
+  
+}
+
+
+r2.df <- tibble(r2=bayes_R2(X,p,L,ind,samples))
+
+ggplot(data = r2.df, aes(x=r2))+
+  geom_density()+
+  xlab("R2")+
+  ylab("Density")+
+  ggtitle("Bayesian Posterior R2")+
+  theme_minimal()
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+

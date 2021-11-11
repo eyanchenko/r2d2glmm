@@ -1,0 +1,180 @@
+---
+title: "R2D2 Prior for Arbitrary Link Function (Probit Model)"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{probit_example}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+In this example we will demonstrate how to use the "arbitrary link" functionality of the R2D2 prior with the probit model. Let $Y_i\in\{0,1\}$ be the response and $X_i$ be the $(p=10)$ fixed effect covariates for $i=1,\dots,100$. Then
+$$
+  Y_i \sim\mathsf{Bernoulli}(\Phi(\eta_i))
+$$
+where
+$$
+  \eta_i = \beta_0 + X_i\beta
+$$
+and $\Phi(\cdot)$ is the cumulative distribution function (CDF) for a standard normal random variable.
+
+## Generate Data
+
+```{r}
+
+set.seed(12345)
+
+n <- 100
+p <- 10
+
+beta0 <- 0.25
+beta <- rnorm(p)
+
+X <- matrix(rnorm(n*p), ncol=p, nrow=n)
+eta <- beta0 + X%*%beta
+
+Y <- rbinom(n, 1, pnorm(eta))
+
+```
+
+
+#### Priors
+
+$$
+  \beta_0\sim\mathsf{Normal}(\mu_0,\tau_0^2),\ \beta_j\sim\mathsf{Normal}(0,\phi_j W), (\phi_1,\dots,\phi_p)\sim\mathsf{Dirichlet}(\xi_1,\dots,\xi_p),\
+  W\sim\mbox{GBP}(a^*,b^*,c^*,d^*)
+$$
+where $\mu_0=0,\tau_0^2=3$ and $\xi_j=1$ for $j=1,\dots,p=10$.
+
+### Compute $(a^*,b^*,c^*,d^*)$
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+```
+
+```{r setup}
+library(r2d2glmm)
+```
+
+```{r}
+a=1
+b=1
+
+mu <- function(x){pnorm(x)}
+sigma2 <- function(x){pnorm(x)*(1-pnorm(x))}
+
+
+params <- WGBP(a, b, b0=qnorm(mean(Y)), link="Arbitrary", mu=mu, sigma2=sigma2)
+params
+```
+
+
+
+### Fit Model in JAGS
+
+```{r}
+library(rjags)
+
+  data = list(Y=Y, X = X, n=n, p=p, params=params)
+  
+  model_string <- textConnection("model{
+                               
+  ##Likelihood
+
+ for(i in 1:n){
+    Y[i] ~ dbern(mu[i])  
+    probit(mu[i]) <- beta0 + inprod( X[i, ], beta[])
+ }
+
+
+                              
+##Priors
+
+
+  V ~ dbeta(params[1], params[2])
+  W <- params[4]*(V/(1-V))^(1/params[3])
+  
+  for(i in 1:p){delta[i] <- 1}
+  dd ~ ddirch(delta)
+  
+  beta0 ~ dnorm(0, 1/3)
+  
+  for(j in 1:p){
+  beta[j] ~ dnorm(0, 1/(W*dd[j]))
+  }
+  
+        
+                                 }")
+  
+  inits <- list(beta=rnorm(p,0,1))
+  model <- jags.model(model_string,data = data, inits=inits, n.chains=1)
+  
+  update(model, 5000)
+  
+  params <- c("beta", "beta0", "W", "dd")
+  samples <- coda.samples(model,
+                          variable.names=params,
+                          n.iter=10000)
+
+```
+
+
+## Check convergence
+
+```{r, fig.width=7}
+plot(samples[[1]][,1]) # W
+plot(samples[[1]][,3]) # beta_2
+plot(samples[[1]][,5]) # beta_4
+plot(samples[[1]][,1+p+2]) # phi_1
+
+```
+
+
+## Plot results
+
+```{r, fig.width=7}
+library(dplyr)
+library(ggplot2)
+
+bayes_R2 <- function(X, p, samples){
+  
+  b0s <- as.matrix(samples[[1]][,1+p+1])
+  betas <- as.matrix(samples[[1]][,(2):(1+p)])
+
+  etas <- betas%*%base::t(X) 
+  
+  etas <- sweep(etas, 1, b0s, "+")
+  
+  y_pred <- pnorm(etas)
+  y_err  <- pnorm(etas)*(1-pnorm(etas))
+  
+  M <- apply(y_pred,1,var)
+  V <- apply(y_err,1,mean)
+  return(M/(M+V))
+  
+}
+
+
+r2.df <- tibble(r2=bayes_R2(X,p,samples))
+
+ggplot(data = r2.df, aes(x=r2))+
+  geom_density()+
+  xlab("R2")+
+  ylab("Density")+
+  ggtitle("Bayesian Posterior R2")+
+  theme_minimal()
+
+
+
+```
+
+
+
+
+
+
+
+
+
