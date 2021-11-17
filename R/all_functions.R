@@ -1,7 +1,3 @@
-### combine pdf functions into one where an input option is which model/link function
-### also make it work for arbitrary link function
-## Ex: dw(w,a,b,link=c("Poisson", "Logistic", "Arbitrary"))
-
 #' @title PDF of Generalized Beta Prime distribution
 #' @description This function computes the value of the
 #' probability density function of a generalized
