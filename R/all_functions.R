@@ -169,7 +169,7 @@ W_to_R2 <- function(W, b0=0, link=c("Gaussian", "Logistic", "Poisson", "Poisson_
     
     r = gamma(1+2/theta)/gamma(1+1/theta)^2
     
-    R2 <- (exp(W)-1)*(2+r) / (exp(W)*(2+r)-1) 
+    R2 <- (exp(W)-1)/(r*exp(W)-1) 
     
     
   }else if(link=="Arbitrary"){
@@ -304,10 +304,10 @@ dw <- function(w, a=1, b=1, b0=0, link=c("Gaussian", "Logistic", "Poisson", "Poi
 
   }else if(link=="Weibull"){
     
-    r = 1/(2+gamma(1+2/theta)/gamma(1+1/theta)^2)
+    r = gamma(1+2/theta)/gamma(1+1/theta)^2
     
     return(
-      (1-r)^b*exp(w)*(exp(w)-1)^(a-1) / (beta(a,b)*(exp(w)-r)^(a+b))
+      ( (exp(w)-1)^(a-1) * (exp(w)*(r-1))^b ) / (beta(a,b) * (r*exp(w)-1)^(a+b))
     )
     
     
